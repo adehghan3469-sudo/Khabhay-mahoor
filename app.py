@@ -1,4 +1,7 @@
 import streamlit as st
+from openai import OpenAI
+import ee
+import geemap.foliumap as geemap
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
@@ -6,7 +9,7 @@ import plotly.graph_objects as go
 # تنظیمات صفحه
 # -------------------------------------------------
 st.set_page_config(
-    page_title="خبر ماهور | دفتر فنی مهندسی و مشاوره کشاورزی ماهور",
+    page_title="از بابامنیر چه خبر",
     page_icon="🌾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -17,60 +20,26 @@ st.set_page_config(
 # -------------------------------------------------
 st.markdown("""
 <style>
-    .stApp { background-color: #f4f6f5; }
+    .stApp {
+        background-color: #f8f9fa;
+    }
     [data-testid="stSidebar"] {
         background-color: #1a3c34;
     }
-    [data-testid="stSidebar"] * { color: #ffffff !important; }
-    .main-title {
-        font-size: 1.8rem;
-        font-weight: 700;
-        color: #1a3c34;
-        margin-bottom: 0.3rem;
-    }
-    .sub-title {
-        color: #555;
-        font-size: 0.95rem;
-        margin-bottom: 1.5rem;
-    }
-    .card {
-        background: white;
-        padding: 1.2rem;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        margin-bottom: 1rem;
-        border-right: 4px solid #1a3c34;
-    }
-    .ad-official {
-        border-right: 4px solid #c0392b;
-        background: #fff5f5;
-    }
-    .ad-business {
-        border-right: 4px solid #2980b9;
-    }
-    .ad-charity {
-        border-right: 4px solid #27ae60;
-        background: #f0fff4;
-    }
-    .section-header {
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: #1a3c34;
-        margin: 1.5rem 0 0.8rem 0;
-        padding-bottom: 0.4rem;
-        border-bottom: 2px solid #1a3c34;
+    [data-testid="stSidebar"] * {
+        color: white !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # -------------------------------------------------
-# داده‌های نمونه (بعداً می‌توانید از دیتابیس یا گوگل شیت بخوانید)
+# داده‌های نمونه هواشناسی (بعداً با API واقعی جایگزین کنید)
 # -------------------------------------------------
-def get_weather():
+def get_current_weather():
     return {
-        "temp": 12.1,
-        "feels_like": 11.7,
-        "humidity": 86,
+        "temp": 12.4,
+        "feels_like": 12.2,
+        "humidity": 89,
         "et0": 2.7,
         "rain_prob": 0,
         "wind": 3,
@@ -78,294 +47,245 @@ def get_weather():
         "condition": "صاف و آفتابی",
         "min_temp": 9,
         "max_temp": 25,
-        "location": "بابامنیر / ماهور",
+        "location": "بابامنیر",
         "date": "سه‌شنبه ۳ آذر ۱۴۰۵",
-        "time": "۲۰:۱۵"
+        "time": "۱۹:۲۰"
     }
 
-def get_official_ads():
-    return [
-        {
-            "title": "توزیع کود شیمیایی",
-            "org": "جهاد کشاورزی ماهورمیلاتی",
-            "text": "توزیع کود اوره و فسفات از روز شنبه به مدت ۵ روز در محل انبار جهاد انجام می‌شود. کشاورزان با کارت ملی مراجعه کنند.",
-            "date": "۲ آذر ۱۴۰۵",
-            "priority": 1
-        },
-        {
-            "title": "پرداخت وام قرض‌الحسنه",
-            "org": "کمیته امداد امام خمینی",
-            "text": "ثبت‌نام وام‌های ضروری و اشتغال‌زایی از هفته آینده آغاز می‌شود. مدارک لازم: شناسنامه، کارت ملی و مدارک شغلی.",
-            "date": "۱ آذر ۱۴۰۵",
-            "priority": 1
-        },
-    ]
+# -------------------------------------------------
+# بخش گروک (از من بپرس)
+# -------------------------------------------------
+def get_grok_client():
+    return OpenAI(
+        api_key=st.secrets["xai"]["api_key"],
+        base_url="https://api.x.ai/v1"
+    )
 
-def get_business_ads():
-    return [
-        {
-            "title": "قهوه‌چی ماهور",
-            "text": "فروش قهوه تازه و دم‌کرده، صبحانه محلی و میان‌وعده. روبروی میدان اصلی بابامنیر. تخفیف ویژه کشاورزان.",
-            "contact": "۰۹۱۷xxxxxxx",
-            "date": "۳ آذر"
-        },
-        {
-            "title": "فروشگاه نهاده‌های کشاورزی رضایی",
-            "text": "کود، سم، بذر و قطعات تراکتور موجود است. قیمت مناسب و ارسال به روستاهای اطراف.",
-            "contact": "۰۹۱۸xxxxxxx",
-            "date": "۲ آذر"
-        },
-    ]
+def build_system_prompt(weather: dict) -> str:
+    return f"""تو یک دستیار کشاورزی هوشمند و باتجربه مخصوص منطقه **بابامنیر** (استان فارس) هستی.
 
-def get_charity_items():
-    return [
-        {
-            "title": "لباس زمستانی بچه‌گانه",
-            "text": "چند دست لباس گرم بچه‌گانه سایز ۶ تا ۱۰ سال آماده اهدا به نیازمندان.",
-            "status": "آماده تحویل",
-            "contact": "از طریق دفتر فنی"
-        },
-        {
-            "title": "درخواست بخاری نفتی",
-            "text": "یک خانواده نیازمند به بخاری نفتی سالم احتیاج دارد.",
-            "status": "درخواست",
-            "contact": "از طریق دفتر فنی"
-        },
-    ]
+اطلاعات هواشناسی فعلی:
+- مکان: {weather['location']}
+- تاریخ: {weather['date']} | ساعت {weather['time']}
+- دمای فعلی: {weather['temp']}°C (احساس: {weather['feels_like']}°C)
+- حداقل / حداکثر: {weather['min_temp']} / {weather['max_temp']}°C
+- رطوبت: {weather['humidity']}%
+- احتمال بارش: {weather['rain_prob']}%
+- باد: {weather['wind']} km/h از {weather['wind_dir']}
+- وضعیت: {weather['condition']}
+- ET₀ امروز: {weather['et0']} میلی‌متر
 
-def get_local_jobs():
-    return [
-        {
-            "title": "نیاز به تراکتور برای شخم",
-            "type": "درخواست",
-            "text": "حدود ۲ هکتار زمین آبی برای شخم پاییزه. محدوده بابامنیر.",
-            "contact": "۰۹۱۷xxxxxxx"
-        },
-        {
-            "title": "انجام خدمات اینترنتی و ثبت‌نام",
-            "type": "پیشنهاد کار",
-            "text": "انجام ثبت‌نام‌های اینترنتی، پیگیری وام، کار با سامانه‌های دولتی و طراحی ساده.",
-            "contact": "۰۹۱۸xxxxxxx"
-        },
-        {
-            "title": "کارگر فصلی برای برداشت",
-            "type": "درخواست",
-            "text": "نیاز به ۲ نفر کارگر برای چند روز کار در باغ.",
-            "contact": "از طریق دفتر"
-        },
-    ]
+دستورالعمل‌ها:
+- پاسخ‌ها را ساده، کاربردی و به زبان فارسی بده.
+- توصیه‌های آبیاری را بر اساس ET₀ و احتمال بارش بده.
+- مختصر و عملی صحبت کن.
+"""
+
+def ask_grok_page(weather: dict):
+    st.header("🤖 از من بپرس — دستیار کشاورزی بابامنیر")
+    st.caption("سوالات خود را در مورد آبیاری، سم‌پاشی، کاشت و شرایط فعلی بپرسید.")
+
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    if prompt := st.chat_input("سوال خود را بنویسید..."):
+        st.session_state.chat_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        system_prompt = build_system_prompt(weather)
+        recent = st.session_state.chat_messages[-8:]
+        api_messages = [{"role": "system", "content": system_prompt}] + recent
+
+        with st.chat_message("assistant"):
+            with st.spinner("در حال بررسی شرایط فعلی..."):
+                try:
+                    client = get_grok_client()
+                    response = client.chat.completions.create(
+                        model="grok-3",
+                        messages=api_messages,
+                        temperature=0.35,
+                        max_tokens=800
+                    )
+                    answer = response.choices[0].message.content
+                    st.markdown(answer)
+                    st.session_state.chat_messages.append({"role": "assistant", "content": answer})
+                except Exception as e:
+                    st.error(f"خطا در ارتباط با گروک: {e}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🗑️ پاک کردن گفتگو", use_container_width=True):
+            st.session_state.chat_messages = []
+            st.rerun()
 
 # -------------------------------------------------
-# صفحات مختلف
+# بخش پایش ماهواره‌ای (NDVI)
 # -------------------------------------------------
-def page_home(weather):
-    st.markdown('<div class="main-title">دفتر فنی مهندسی و مشاوره کشاورزی ماهور</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-title">زیر نظر مهندس افشین دهقان | بابامنیر - ماهورمیلاتی</div>', unsafe_allow_html=True)
+def initialize_gee():
+    try:
+        credentials = ee.ServiceAccountCredentials(
+            email=st.secrets["gee"]["client_email"],
+            key_data=st.secrets["gee"]["private_key"]
+        )
+        ee.Initialize(credentials)
+        return True
+    except Exception as e:
+        st.error(f"خطا در اتصال به Google Earth Engine: {e}")
+        return False
 
-    # ردیف متریک‌های هواشناسی
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("ET₀", f"{weather['et0']} mm")
-    c2.metric("احتمال بارش", f"{weather['rain_prob']}%")
-    c3.metric("رطوبت", f"{weather['humidity']}%")
-    c4.metric("حداقل / حداکثر", f"{weather['min_temp']} / {weather['max_temp']}°C")
-    c5.metric("دمای فعلی", f"{weather['temp']}°C", delta=f"احساس {weather['feels_like']}°C")
+def get_babamonir_region():
+    point = ee.Geometry.Point(51.206, 30.072)
+    return point.buffer(6000)
 
-    st.info(f"وضعیت فعلی: {weather['condition']} | باد: {weather['wind']} km/h از {weather['wind_dir']} | {weather['date']} - {weather['time']}")
+def satellite_page():
+    st.header("🛰️ پایش ماهواره‌ای — شاخص NDVI بابامنیر")
 
-    # سه ستون اصلی
-    left, center, right = st.columns([1.1, 1.4, 1.1])
+    if not initialize_gee():
+        st.info("برای فعال شدن این بخش، ابتدا Service Account گوگل ارث انجین را در Secrets تنظیم کنید.")
+        return
 
-    # ---------- ستون راست: اطلاع‌رسانی و تبلیغات ----------
-    with right:
-        st.markdown('<div class="section-header">📢 اطلاع‌رسانی و تبلیغات</div>', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        days = st.slider("چند روز اخیر؟", 7, 45, 15)
+    with col2:
+        cloud = st.slider("حداکثر پوشش ابر (%)", 5, 40, 20)
 
-        st.markdown("#### اطلاعیه‌های رسمی")
-        for ad in get_official_ads():
-            st.markdown(f"""
-            <div class="card ad-official">
-                <strong>{ad['title']}</strong><br>
-                <small>{ad['org']} | {ad['date']}</small>
-                <p style="margin-top:8px; font-size:0.9rem;">{ad['text']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    start_str = start_date.strftime("%Y-%m-%d")
+    end_str = end_date.strftime("%Y-%m-%d")
 
-        st.markdown("#### تبلیغ کسب‌وکارهای محلی")
-        for ad in get_business_ads():
-            st.markdown(f"""
-            <div class="card ad-business">
-                <strong>{ad['title']}</strong><br>
-                <small>{ad['date']}</small>
-                <p style="margin-top:8px; font-size:0.9rem;">{ad['text']}</p>
-                <small>تماس: {ad['contact']}</small>
-            </div>
-            """, unsafe_allow_html=True)
+    region = get_babamonir_region()
 
-    # ---------- ستون وسط: دفتر فنی ----------
-    with center:
-        st.markdown('<div class="section-header">🏢 دفتر فنی مهندسی ماهور</div>', unsafe_allow_html=True)
+    with st.spinner("در حال دریافت تصاویر ماهواره‌ای..."):
+        try:
+            collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+                          .filterBounds(region)
+                          .filterDate(start_str, end_str)
+                          .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud)))
 
-        st.markdown("""
-        <div class="card">
-            <h4>خدمات دفتر فنی</h4>
-            <ul>
-                <li>مشاوره تخصصی کشاورزی و باغداری</li>
-                <li>تهیه نقشه و طرح‌های فنی</li>
-                <li>توصیه‌های کودی و آبیاری</li>
-                <li>پیگیری مجوزها و تسهیلات</li>
-                <li>آموزش‌های دوره‌ای کشاورزان</li>
-            </ul>
-            <p><strong>مهندس افشین دهقان</strong><br>
-            تماس: ۰۹۱۷۴۸۰۸۷۵۵<br>
-            ایتا و روبیکا: a.d3469@</p>
-        </div>
-        """, unsafe_allow_html=True)
+            def add_ndvi(img):
+                ndvi = img.normalizedDifference(["B8", "B4"]).rename("NDVI")
+                return img.addBands(ndvi)
 
-        st.markdown("#### آخرین توصیه‌های فنی")
-        st.success("با توجه به ET₀ برابر ۲.۷ میلی‌متر و عدم بارش، آبیاری سبک باغات توصیه می‌شود.")
-        st.warning("دمای شبانه به حدود ۹ درجه می‌رسد. مراقب سرمازدگی نهال‌های جوان باشید.")
+            ndvi_col = collection.map(add_ndvi)
+            ndvi_img = ndvi_col.median().select("NDVI").clip(region)
 
-        st.markdown("#### پیش‌بینی دمای ۷ روز آینده")
-        days = ["۳ آذر", "۴ آذر", "۵ آذر", "۶ آذر", "۷ آذر", "۸ آذر", "۹ آذر"]
-        max_t = [25, 25, 24, 25, 24, 23, 22]
-        min_t = [9, 9, 8, 8, 8, 7, 10]
+            mean_dict = ndvi_img.reduceRegion(
+                reducer=ee.Reducer.mean(),
+                geometry=region,
+                scale=10,
+                maxPixels=1e9
+            )
+            mean_ndvi = mean_dict.getInfo().get("NDVI")
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=days, y=max_t, mode="lines+markers", name="حداکثر", line=dict(color="#e74c3c")))
-        fig.add_trace(go.Scatter(x=days, y=min_t, mode="lines+markers", name="حداقل", line=dict(color="#3498db")))
-        fig.update_layout(height=280, margin=dict(l=10, r=10, t=20, b=20), legend=dict(orientation="h"))
-        st.plotly_chart(fig, use_container_width=True)
+            if mean_ndvi is None:
+                st.warning("تصویر مناسبی پیدا نشد. بازه یا درصد ابر را تغییر دهید.")
+                return
 
-    # ---------- ستون چپ: خیریه + کاریابی ----------
-    with left:
-        st.markdown('<div class="section-header">🤝 صندوق خیریه و لوازم</div>', unsafe_allow_html=True)
-        for item in get_charity_items():
-            st.markdown(f"""
-            <div class="card ad-charity">
-                <strong>{item['title']}</strong><br>
-                <small>{item['status']}</small>
-                <p style="margin-top:6px; font-size:0.9rem;">{item['text']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.metric("میانگین NDVI منطقه", f"{mean_ndvi:.3f}")
+            st.caption(f"بازه: {start_str} تا {end_str}")
 
-        st.markdown('<div class="section-header">💼 کاریابی محلی</div>', unsafe_allow_html=True)
-        for job in get_local_jobs():
-            color = "#27ae60" if job["type"] == "پیشنهاد کار" else "#e67e22"
-            st.markdown(f"""
-            <div class="card" style="border-right:4px solid {color}">
-                <strong>{job['title']}</strong><br>
-                <small>{job['type']}</small>
-                <p style="margin-top:6px; font-size:0.9rem;">{job['text']}</p>
-                <small>{job['contact']}</small>
-            </div>
-            """, unsafe_allow_html=True)
+            Map = geemap.Map(center=[30.072, 51.206], zoom=12)
+            ndvi_vis = {
+                "min": 0.0, "max": 0.8,
+                "palette": ["FFFFFF", "CE7E45", "DF923D", "F1B555", "FCD163",
+                            "99B718", "74A901", "66A000", "529400", "3E8601"]
+            }
+            Map.addLayer(ndvi_img, ndvi_vis, "NDVI")
+            Map.addLayer(region, {"color": "red"}, "محدوده", opacity=0.3)
+            Map.to_streamlit(height=500)
 
-
-def page_ads():
-    st.header("📢 اطلاع‌رسانی و تبلیغات")
-    st.info("در این بخش اطلاعیه‌های رسمی ارگان‌ها و تبلیغ کسب‌وکارهای محلی نمایش داده می‌شود. هر دو روز حداکثر ۲ تا ۳ آگهی جدید پذیرفته می‌شود.")
-    
-    tab1, tab2 = st.tabs(["اطلاعیه‌های رسمی", "تبلیغ کسب‌وکارها"])
-    
-    with tab1:
-        for ad in get_official_ads():
-            with st.expander(f"🔴 {ad['title']} — {ad['org']}", expanded=True):
-                st.write(ad['text'])
-                st.caption(f"تاریخ: {ad['date']}")
-    
-    with tab2:
-        for ad in get_business_ads():
-            with st.expander(f"🔵 {ad['title']}", expanded=True):
-                st.write(ad['text'])
-                st.caption(f"تماس: {ad['contact']} | {ad['date']}")
-
-
-def page_charity():
-    st.header("🤝 صندوق خیریه و لوازم")
-    st.write("اگر وسیله، لباس یا کالایی برای اهدا دارید یا نیازمندی را می‌شناسید، از طریق دفتر فنی اطلاع دهید.")
-    
-    for item in get_charity_items():
-        st.markdown(f"""
-        <div class="card ad-charity">
-            <strong>{item['title']}</strong> — {item['status']}<br>
-            {item['text']}<br>
-            <small>{item['contact']}</small>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def page_jobs():
-    st.header("💼 کاریابی محلی ماهور")
-    st.write("درخواست کار، پیشنهاد خدمات و کارهای روستایی و اینترنتی در این بخش قرار می‌گیرد.")
-    
-    for job in get_local_jobs():
-        st.markdown(f"""
-        <div class="card">
-            <strong>{job['title']}</strong> ({job['type']})<br>
-            {job['text']}<br>
-            <small>{job['contact']}</small>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def page_weather(weather):
-    st.header("🌤️ هواشناسی و توصیه‌های فنی")
-    st.metric("دمای فعلی", f"{weather['temp']}°C")
-    st.write(f"رطوبت: {weather['humidity']}% | ET₀: {weather['et0']} mm | باد: {weather['wind']} km/h")
-    st.success("توصیه روز: با توجه به شرایط فعلی، آبیاری سبک و محافظت از نهال‌های جوان در برابر سرما پیشنهاد می‌شود.")
-
-
-def page_about():
-    st.header("🏢 درباره دفتر فنی ماهور")
-    st.markdown("""
-    **دفتر فنی مهندسی و مشاوره کشاورزی ماهور**  
-    زیر نظر **مهندس افشین دهقان**
-
-    این دفتر با هدف ارائه خدمات فنی، مشاوره‌ای و آموزشی به کشاورزان، باغداران و دامداران منطقه ماهورمیلاتی و بابامنیر راه‌اندازی شده است.
-
-    **راه‌های ارتباطی:**
-    - واتساپ: ۰۹۱۷۴۸۰۸۷۵۵
-    - ایتا و روبیکا: a.d3469@
-    """)
+        except Exception as e:
+            st.error(f"خطا: {e}")
 
 # -------------------------------------------------
-# منوی کناری
+# صفحه خلاصه روز
+# -------------------------------------------------
+def daily_summary_page(weather: dict):
+    st.title("🌾 از بابامنیر چه خبر")
+    st.caption(f"منطقه: {weather['location']} | تاریخ: {weather['date']} | ساعت: {weather['time']}")
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("ET₀ امروز", f"{weather['et0']} mm")
+    col2.metric("احتمال بارش", f"{weather['rain_prob']}%")
+    col3.metric("رطوبت", f"{weather['humidity']}%")
+    col4.metric("حداقل / حداکثر", f"{weather['min_temp']} / {weather['max_temp']}°C")
+    col5.metric("دمای فعلی", f"{weather['temp']}°C", delta=f"احساس {weather['feels_like']}°C")
+
+    st.info(f"وضعیت فعلی: {weather['condition']} | باد: {weather['wind']} km/h از {weather['wind_dir']}")
+
+    st.subheader("📈 پیش‌بینی دمای ۷ روزه")
+    days = ["۲۴ آبان", "۲۵ آبان", "۲۶ آبان", "۲۷ آبان", "۲۸ آبان", "۲۹ آبان", "۳۰ آبان"]
+    max_temps = [25, 25, 24, 25, 24, 23, 22]
+    min_temps = [10, 9, 9, 8, 8, 7, 10]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=days, y=max_temps, mode="lines+markers", name="حداکثر", line=dict(color="red")))
+    fig.add_trace(go.Scatter(x=days, y=min_temps, mode="lines+markers", name="حداقل", line=dict(color="blue")))
+    fig.update_layout(height=350, margin=dict(l=20, r=20, t=30, b=20))
+    st.plotly_chart(fig, use_container_width=True)
+
+# -------------------------------------------------
+# صفحات دیگر (آماده برای پر کردن)
+# -------------------------------------------------
+def placeholder_page(title: str):
+    st.header(title)
+    st.info("این بخش به زودی تکمیل می‌شود.")
+
+# -------------------------------------------------
+# منوی اصلی
 # -------------------------------------------------
 with st.sidebar:
-    st.markdown("### 🌾 خبر ماهور")
-    st.caption("دفتر فنی مهندسی و مشاوره کشاورزی ماهور")
+    st.markdown("## 🌾 از بابامنیر چه خبر")
     st.markdown("---")
     
     menu = st.radio(
-        "منو",
+        "بخش‌های داشبورد",
         [
-            "صفحه اصلی",
-            "اطلاع‌رسانی و تبلیغات",
-            "صندوق خیریه و لوازم",
-            "کاریابی محلی",
-            "هواشناسی و توصیه فنی",
-            "درباره دفتر فنی"
+            "خلاصه روز",
+            "هواشناسی زنده",
+            "مقایسه مناطق",
+            "اخبار و هشدارها",
+            "از من بپرس",
+            "قیمت نهاده‌ها",
+            "توصیه‌های فنی",
+            "پایش ماهواره‌ای",
+            "تنظیمات و نوتیفیکیشن"
         ],
         label_visibility="collapsed"
     )
     
     st.markdown("---")
-    st.caption("تماس: ۰۹۱۷۴۸۰۸۷۵۵")
-    st.caption("ایتا و روبیکا: a.d3469@")
+    st.caption("ساعت: ۱۹:۲۰")
+    st.caption("سه‌شنبه ۳ آذر ۱۴۰۵")
+    st.caption("واتساپ: ۰۹۱۷۴۸۰۸۷۵۵")
 
 # -------------------------------------------------
-# مسیریابی
+# مسیریابی صفحات
 # -------------------------------------------------
-weather = get_weather()
+weather = get_current_weather()
 
-if menu == "صفحه اصلی":
-    page_home(weather)
-elif menu == "اطلاع‌رسانی و تبلیغات":
-    page_ads()
-elif menu == "صندوق خیریه و لوازم":
-    page_charity()
-elif menu == "کاریابی محلی":
-    page_jobs()
-elif menu == "هواشناسی و توصیه فنی":
-    page_weather(weather)
-elif menu == "درباره دفتر فنی":
-    page_about()
+if menu == "خلاصه روز":
+    daily_summary_page(weather)
+elif menu == "از من بپرس":
+    ask_grok_page(weather)
+elif menu == "پایش ماهواره‌ای":
+    satellite_page()
+elif menu == "هواشناسی زنده":
+    placeholder_page("🌤️ هواشناسی زنده")
+elif menu == "مقایسه مناطق":
+    placeholder_page("📊 مقایسه مناطق")
+elif menu == "اخبار و هشدارها":
+    placeholder_page("📰 اخبار و هشدارها")
+elif menu == "قیمت نهاده‌ها":
+    placeholder_page("💰 قیمت نهاده‌ها")
+elif menu == "توصیه‌های فنی":
+    placeholder_page("🛠️ توصیه‌های فنی")
+elif menu == "تنظیمات و نوتیفیکیشن":
+    placeholder_page("⚙️ تنظیمات و نوتیفیکیشن")
